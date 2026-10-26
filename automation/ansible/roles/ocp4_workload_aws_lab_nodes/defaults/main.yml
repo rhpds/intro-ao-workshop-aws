@@ -1,0 +1,19 @@
+---
+aws_lab_nodes_region: "{{ aws_region | default('us-east-2') }}"
+aws_lab_nodes_access_key: "{{ aws_access_key_id | default(omit) }}"
+aws_lab_nodes_secret_key: "{{ aws_secret_access_key | default(omit) }}"
+aws_lab_nodes_name_prefix: "{{ guid }}-lb1284"
+aws_lab_nodes_instance_type: "{{ node_instance_type | default('t3a.medium') }}"
+aws_lab_nodes_ami_name: "{{ node_instance_image | default('RHEL-9.6*GOLD*') }}"
+aws_lab_nodes_ami_owners:
+  - self
+  - amazon
+aws_lab_nodes_root_volume_size: "{{ node_rootfs_size | default(50) }}"
+aws_lab_nodes_extra_volume_size: "{{ node_extra_disk_size | default(40) }}"
+aws_lab_nodes_ssh_user: "{{ node_ssh_username | default('lab-user') }}"
+aws_lab_nodes_ssh_password: "{{ node_ssh_password | default(common_host_password) }}"
+aws_lab_nodes_names:
+  - node1
+  - node2
+  - node3
+aws_lab_nodes_security_group_name: "{{ aws_lab_nodes_name_prefix }}-nodes"

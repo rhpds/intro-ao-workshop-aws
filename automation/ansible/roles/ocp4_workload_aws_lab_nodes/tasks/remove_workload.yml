@@ -1,0 +1,21 @@
+---
+- name: Terminate AWS lab nodes
+  amazon.aws.ec2_instance:
+    region: "{{ aws_lab_nodes_region }}"
+    aws_access_key: "{{ aws_lab_nodes_access_key }}"
+    aws_secret_key: "{{ aws_lab_nodes_secret_key }}"
+    state: absent
+    wait: true
+    filters:
+      tag:guid: "{{ guid }}"
+      tag:lab: lb1284-intro-ao-aws
+  ignore_errors: true
+
+- name: Remove AWS lab node security group
+  amazon.aws.ec2_security_group:
+    name: "{{ aws_lab_nodes_security_group_name }}"
+    region: "{{ aws_lab_nodes_region }}"
+    aws_access_key: "{{ aws_lab_nodes_access_key }}"
+    aws_secret_key: "{{ aws_lab_nodes_secret_key }}"
+    state: absent
+  ignore_errors: true

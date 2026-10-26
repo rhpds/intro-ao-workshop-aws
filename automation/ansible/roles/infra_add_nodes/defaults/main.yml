@@ -104,5 +104,9 @@ infra_add_nodes_password: "{{ bastion_ansible_ssh_pass }}"
 # direct network access to the CNV nodes.
 infra_add_nodes_use_bastion_proxy: true
 
+# Optional map used when the nodes are not reachable by their inventory name.
+# Example: {node1: 1.2.3.4, node2: 1.2.3.5}
+infra_add_nodes_address_map: {}
+
 # Keep each proxy connection attempt bounded so readiness checks can retry.
 infra_add_nodes_bastion_connect_timeout: 10

@@ -1,0 +1,156 @@
+---
+- name: Discover default VPC
+  amazon.aws.ec2_vpc_net_info:
+    region: "{{ aws_lab_nodes_region }}"
+    aws_access_key: "{{ aws_lab_nodes_access_key }}"
+    aws_secret_key: "{{ aws_lab_nodes_secret_key }}"
+    filters:
+      is-default: "true"
+  register: r_aws_lab_nodes_vpc
+
+- name: Set default VPC ID
+  ansible.builtin.set_fact:
+    aws_lab_nodes_vpc_id: "{{ r_aws_lab_nodes_vpc.vpcs[0].vpc_id }}"
+
+- name: Discover default VPC subnets
+  amazon.aws.ec2_vpc_subnet_info:
+    region: "{{ aws_lab_nodes_region }}"
+    aws_access_key: "{{ aws_lab_nodes_access_key }}"
+    aws_secret_key: "{{ aws_lab_nodes_secret_key }}"
+    filters:
+      vpc-id: "{{ aws_lab_nodes_vpc_id }}"
+      default-for-az: "true"
+  register: r_aws_lab_nodes_subnets
+
+- name: Set subnet ID
+  ansible.builtin.set_fact:
+    aws_lab_nodes_subnet_id: "{{ r_aws_lab_nodes_subnets.subnets[0].subnet_id }}"
+
+- name: Create security group for lab nodes
+  amazon.aws.ec2_security_group:
+    name: "{{ aws_lab_nodes_security_group_name }}"
+    description: LB1284 AO workshop lab nodes
+    region: "{{ aws_lab_nodes_region }}"
+    aws_access_key: "{{ aws_lab_nodes_access_key }}"
+    aws_secret_key: "{{ aws_lab_nodes_secret_key }}"
+    vpc_id: "{{ aws_lab_nodes_vpc_id }}"
+    rules:
+      - proto: tcp
+        ports:
+          - 22
+        cidr_ip: 0.0.0.0/0
+        rule_desc: SSH access to workshop nodes
+      - proto: all
+        group_name: "{{ aws_lab_nodes_security_group_name }}"
+        rule_desc: Allow node-to-node traffic
+    rules_egress:
+      - proto: all
+        cidr_ip: 0.0.0.0/0
+  register: r_aws_lab_nodes_sg
+
+- name: Find RHEL AMI
+  amazon.aws.ec2_ami_info:
+    region: "{{ aws_lab_nodes_region }}"
+    aws_access_key: "{{ aws_lab_nodes_access_key }}"
+    aws_secret_key: "{{ aws_lab_nodes_secret_key }}"
+    owners: "{{ aws_lab_nodes_ami_owners }}"
+    filters:
+      name: "{{ aws_lab_nodes_ami_name }}"
+      architecture: x86_64
+      root-device-type: ebs
+      virtualization-type: hvm
+  register: r_aws_lab_nodes_amis
+
+- name: Set latest RHEL AMI ID
+  ansible.builtin.set_fact:
+    aws_lab_nodes_ami_id: >-
+      {{ (r_aws_lab_nodes_amis.images | sort(attribute='creation_date') | last).image_id }}
+
+- name: Provision AWS lab nodes with public IPs
+  amazon.aws.ec2_instance:
+    name: "{{ aws_lab_nodes_name_prefix }}-{{ item }}"
+    region: "{{ aws_lab_nodes_region }}"
+    aws_access_key: "{{ aws_lab_nodes_access_key }}"
+    aws_secret_key: "{{ aws_lab_nodes_secret_key }}"
+    image_id: "{{ aws_lab_nodes_ami_id }}"
+    instance_type: "{{ aws_lab_nodes_instance_type }}"
+    vpc_subnet_id: "{{ aws_lab_nodes_subnet_id }}"
+    security_group: "{{ aws_lab_nodes_security_group_name }}"
+    network:
+      assign_public_ip: true
+    wait: true
+    exact_count: 1
+    filters:
+      tag:Name: "{{ aws_lab_nodes_name_prefix }}-{{ item }}"
+      instance-state-name: running
+    volumes:
+      - device_name: /dev/sda1
+        ebs:
+          volume_size: "{{ aws_lab_nodes_root_volume_size }}"
+          volume_type: gp3
+          delete_on_termination: true
+      - device_name: /dev/sdf
+        ebs:
+          volume_size: "{{ aws_lab_nodes_extra_volume_size }}"
+          volume_type: gp3
+          delete_on_termination: true
+    tags:
+      Name: "{{ aws_lab_nodes_name_prefix }}-{{ item }}"
+      guid: "{{ guid }}"
+      lab: lb1284-intro-ao-aws
+      node_name: "{{ item }}"
+    user_data: |
+      #cloud-config
+      ssh_pwauth: true
+      users:
+        - default
+        - name: {{ aws_lab_nodes_ssh_user }}
+          plain_text_passwd: {{ aws_lab_nodes_ssh_password }}
+          lock_passwd: false
+          sudo: ALL=(ALL) NOPASSWD:ALL
+          shell: /bin/bash
+      chpasswd:
+        expire: false
+      runcmd:
+        - sed -i 's/^#PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+        - sed -i 's/^PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+        - systemctl restart sshd
+  loop: "{{ aws_lab_nodes_names }}"
+  register: r_aws_lab_nodes_instances
+
+- name: Build AWS lab node info
+  ansible.builtin.set_fact:
+    aws_lab_nodes_info: >-
+      {{
+        aws_lab_nodes_info | default([]) + [{
+          'name': item.item,
+          'external_ip': item.instances[0].public_ip_address,
+          'private_ip': item.instances[0].private_ip_address,
+          'instance_id': item.instances[0].instance_id,
+          'ssh_user': aws_lab_nodes_ssh_user
+        }]
+      }}
+  loop: "{{ r_aws_lab_nodes_instances.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Publish AWS node list to agnosticd user-info
+  agnosticd.core.agnosticd_user_info:
+    data:
+      aws_nodes: "{{ aws_lab_nodes_info }}"
+      node_ssh_username: "{{ aws_lab_nodes_ssh_user }}"
+      node_ssh_password: "{{ aws_lab_nodes_ssh_password }}"
+
+- name: Publish individual AWS node public IPs as flat keys
+  agnosticd.core.agnosticd_user_info:
+    data: "{{ {item.name ~ '_external_ip': item.external_ip} }}"
+  loop: "{{ aws_lab_nodes_info }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Print AWS node info summary
+  ansible.builtin.debug:
+    msg: "{{ item.name }}: {{ item.external_ip }}:22 (user: {{ item.ssh_user }})"
+  loop: "{{ aws_lab_nodes_info }}"
+  loop_control:
+    label: "{{ item.name }}"
